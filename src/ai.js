@@ -2,11 +2,17 @@
 // El resto de PG AI solo conoce generateReply(): recibe texto y devuelve texto.
 // Para cambiar de modelo o de proveedor, se modifica únicamente este archivo.
 
+import { SYSTEM_PROMPT } from "./system-prompt.js";
+
 const MODEL = "@cf/meta/llama-3.2-3b-instruct";
 
 export async function generateReply(env, message) {
+	// Cada petición es independiente: instrucciones de PG AI + mensaje actual (sin historial).
 	const result = await env.AI.run(MODEL, {
-		messages: [{ role: "user", content: message }],
+		messages: [
+			{ role: "system", content: SYSTEM_PROMPT },
+			{ role: "user", content: message },
+		],
 		max_tokens: 512,
 	});
 

@@ -36,7 +36,7 @@ Se priorizarán servicios y recursos gratuitos durante la etapa experimental.
 | Fase 1 — Primer endpoint / API | ✅ Completada |
 | Fase 2 — Primer modelo de IA | ✅ Completada y verificada con Workers AI real |
 | Fase 3 — Interfaz de chat | ✅ Completada |
-| Fase 4 — Instrucciones propias de PG AI | ⏳ Pendiente |
+| Fase 4 — Instrucciones propias de PG AI | ✅ Completada |
 
 ## Estructura del proyecto
 
@@ -48,7 +48,8 @@ pg-ai/
 │   └── app.js          # Llama a POST /api/chat y pinta la conversación
 ├── src/
 │   ├── index.js        # Punto de entrada del Worker: rutas, validación y respuestas HTTP
-│   └── ai.js           # Capa de integración con el proveedor de IA (Workers AI)
+│   ├── ai.js           # Capa de integración con el proveedor de IA (Workers AI)
+│   └── system-prompt.js # Instrucciones (system prompt) de PG AI
 ├── .gitignore          # Archivos que Git no debe versionar (dependencias, secretos, generados)
 ├── package.json        # Metadatos del proyecto, scripts y dependencias
 ├── package-lock.json   # Versiones exactas instaladas (generado por npm)
@@ -131,6 +132,14 @@ curl -i -X POST http://localhost:8787/api/chat -H "Content-Type: application/jso
 - No es un modelo de "razonamiento", así que no gasta tokens ocultos pensando.
 
 Se cambia en un solo lugar: la constante `MODEL` en `src/ai.js`.
+
+## PG AI vs. Llama
+
+- **System prompt:** instrucciones que se envían al modelo con `role: "system"` en cada petición. Viven en `src/system-prompt.js`; `src/ai.js` las antepone al mensaje del usuario.
+- **PG AI ≠ Llama:** PG AI es la aplicación; el modelo de lenguaje subyacente es Llama 3.2 3B Instruct (Meta), ejecutado por Cloudflare Workers AI. Un system prompt condiciona el comportamiento del modelo, pero no lo entrena ni crea un modelo nuevo.
+- **Sin memoria:** cada mensaje es independiente (system prompt + mensaje actual). El modelo no recibe mensajes anteriores. Limitación actual, prevista para una fase posterior.
+- **Sin RAG ni herramientas:** no hay documentos, búsqueda, acciones ni integraciones; PG AI solo conversa.
+- **Costo:** el system prompt también forma parte del contexto enviado, así que consume tokens/neurons en cada petición.
 
 ## Límites del plan gratuito
 
