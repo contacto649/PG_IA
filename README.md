@@ -38,6 +38,7 @@ Se priorizarán servicios y recursos gratuitos durante la etapa experimental.
 | Fase 3 — Interfaz de chat | ✅ Completada |
 | Fase 4 — Instrucciones propias de PG AI | ✅ Completada |
 | Fase 5 — Contexto conversacional temporal | ✅ Completada |
+| Fase 6 — Outputs estructurados | ✅ Completada |
 
 ## Estructura del proyecto
 
@@ -50,7 +51,8 @@ pg-ai/
 ├── src/
 │   ├── index.js        # Punto de entrada del Worker: rutas, validación y respuestas HTTP
 │   ├── ai.js           # Capa de integración con el proveedor de IA (Workers AI)
-│   └── system-prompt.js # Instrucciones (system prompt) de PG AI
+│   ├── system-prompt.js # Instrucciones (system prompt) de PG AI
+│   └── analyze.js      # Instrucciones y validación del análisis estructurado
 ├── .gitignore          # Archivos que Git no debe versionar (dependencias, secretos, generados)
 ├── package.json        # Metadatos del proyecto, scripts y dependencias
 ├── package-lock.json   # Versiones exactas instaladas (generado por npm)
@@ -85,6 +87,7 @@ Luego abrí **http://localhost:8787/** en el navegador para usar el chat.
 | --- | --- | --- |
 | GET | `/api/test` | Verifica que la API funciona. |
 | POST | `/api/chat` | Envía un mensaje al modelo de IA y devuelve su respuesta. |
+| POST | `/api/analyze` | Analiza un proceso y devuelve un objeto JSON estructurado. |
 
 **`GET /api/test`** → `200`
 
@@ -157,6 +160,44 @@ Se cambia en un solo lugar: la constante `MODEL` en `src/ai.js`.
 **Dónde vive el historial:** en el array `conversation` de `public/app.js`, solo en memoria JavaScript (sin localStorage, cookies ni base de datos). Al refrescar la página se pierde. Si una petición falla, el mensaje del usuario se quita del array (la burbuja queda visible con el error) para que el historial siga alternando `user`/`assistant`.
 
 **Ventana de contexto:** cada petición envía `system prompt + historial + mensaje nuevo`. A medida que la conversación crece, aumenta el input enviado y el consumo de neurons del plan gratuito, y eventualmente se alcanzaría el límite de contexto del modelo. Todavía no hay resumen ni truncamiento.
+
+## Output estructurado (Fase 6)
+
+Un **output estructurado** es una respuesta con campos y tipos definidos (JSON) en lugar de texto libre, para que **software** pueda leerla (`if (analysis.ai_required) …`) en vez de interpretar una frase.
+
+**`POST /api/analyze`** — body `{ "text": "descripción del proceso" }` (obligatorio, texto no vacío, máx. 4000 caracteres). Responde:
+
+```json
+{
+  "type": "process_analysis",
+  "summary": "string",
+  "problems": ["string"],
+  "automation_candidate": true,
+  "ai_required": false,
+  "missing_information": ["string"]
+}
+```
+
+Errores: `400` request inválido, `405` método incorrecto, `502` si falla Workers AI o si el modelo devuelve algo que no cumple el contrato (`"Invalid structured response from AI"`).
+
+**Estrategia: JSON pedido por prompt.** La documentación oficial de Workers AI (JSON Mode) no incluye `@cf/meta/llama-3.2-3b-instruct` entre los modelos con `response_format`/JSON Schema nativo, y no cambiamos de modelo. Las instrucciones están en `src/analyze.js` (separadas del system prompt del chat) y el Worker valida el resultado.
+
+**Dos validaciones distintas:** (1) del *request* (`text` existe, es string, no vacío, límite de longitud) y (2) del *output del modelo* (`parseAnalysis`: JSON/objeto válido, `type`, strings, booleans y arrays de strings reales). El modelo no es una fuente de confianza.
+
+**Texto libre vs. JSON:** `/api/chat` está pensado para personas; `/api/analyze` para código. Todavía **no se ejecuta ninguna acción**: la IA interpreta, el software valida y decide, y recién después ejecutaría.
+
+Ejemplo educativo (no conectado a nada):
+
+```js
+const analysis = await response.json();
+if (analysis.automation_candidate && !analysis.ai_required) {
+  console.log("Candidato a automatización tradicional");
+}
+```
+
+`/api/analyze` usa `max_tokens: 600` y `temperature: 0.2`; `/api/chat` mantiene 512. Es una llamada sin historial y con un prompt propio, así que consume neurons del plan gratuito como cualquier otra.
+
+> Limitación del modelo base: el modelo de 3B a veces produce expresiones poco naturales en español o inventa "problemas" cuando casi no hay información. Se documenta, no se parchea.
 
 ## Límites del plan gratuito
 

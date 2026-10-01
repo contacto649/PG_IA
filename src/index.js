@@ -1,7 +1,8 @@
 // Punto de entrada del Worker de PG AI.
 // Cloudflare llama a fetch() por cada petición HTTP que llega al Worker.
 
-import { generateReply } from "./ai.js";
+import { generateReply, generateAnalysisRaw } from "./ai.js";
+import { parseAnalysis } from "./analyze.js";
 
 function json(data, status = 200, headers = {}) {
 	return new Response(JSON.stringify(data), {
@@ -26,6 +27,13 @@ export default {
 				return json({ error: "Método no permitido. Usá POST." }, 405, { Allow: "POST" });
 			}
 			return handleChat(request, env);
+		}
+
+		if (url.pathname === "/api/analyze") {
+			if (request.method !== "POST") {
+				return json({ error: "Método no permitido. Usá POST." }, 405, { Allow: "POST" });
+			}
+			return handleAnalyze(request, env);
 		}
 
 		return json({ error: "Ruta no encontrada." }, 404);
@@ -106,4 +114,40 @@ async function handleChat(request, env) {
 		console.error("Error al llamar a Workers AI:", err);
 		return json({ error: "Error al generar la respuesta.", detail: String(err?.message ?? err) }, 502);
 	}
+}
+
+const MAX_TEXT_LENGTH = 4000;
+
+async function handleAnalyze(request, env) {
+	// Frontera 1: validar el REQUEST del cliente.
+	let body;
+	try {
+		body = await request.json();
+	} catch {
+		return json({ error: "El body debe ser JSON válido." }, 400);
+	}
+
+	const text = body?.text;
+	if (text === undefined) return json({ error: "El campo text es obligatorio." }, 400);
+	if (typeof text !== "string") return json({ error: "El campo text debe ser texto." }, 400);
+	if (text.trim() === "") return json({ error: "El campo text no puede estar vacío." }, 400);
+	if (text.length > MAX_TEXT_LENGTH) {
+		return json({ error: `El campo text supera los ${MAX_TEXT_LENGTH} caracteres.` }, 400);
+	}
+
+	let raw;
+	try {
+		raw = await generateAnalysisRaw(env, text);
+	} catch (err) {
+		console.error("Error al llamar a Workers AI:", err);
+		return json({ error: "Error al generar el análisis.", detail: String(err?.message ?? err) }, 502);
+	}
+
+	// Frontera 2: validar el OUTPUT del modelo (tampoco es de confianza).
+	const parsed = parseAnalysis(raw);
+	if (parsed.error) {
+		console.error("Respuesta estructurada inválida:", parsed.error);
+		return json({ error: "Invalid structured response from AI", detail: parsed.error }, 502);
+	}
+	return json(parsed.value);
 }
