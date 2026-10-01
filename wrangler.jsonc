@@ -11,8 +11,13 @@
 	"main": "src/index.js",
 
 	// Fija la versión del runtime de Workers para que el comportamiento no cambie solo.
-	"compatibility_date": "2026-10-01"
+	"compatibility_date": "2026-10-01",
 
-	// Todavía NO hay bindings (Workers AI, D1, Vectorize, KV...).
-	// Se agregarán en fases posteriores, uno por vez.
+	// Binding de Workers AI: queda disponible en el código como env.AI.
+	// No requiere API key: Cloudflare autentica con la cuenta dueña del Worker.
+	// Workers AI no tiene simulador local: `wrangler dev` usa el servicio real
+	// y consume de la asignación gratuita diaria.
+	"ai": {
+		"binding": "AI"
+	}
 }

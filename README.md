@@ -30,18 +30,24 @@ Se priorizarán servicios y recursos gratuitos durante la etapa experimental.
 
 ## Estado actual
 
-**Fase 0 — Preparación del entorno.**
+| Fase | Estado |
+| --- | --- |
+| Fase 0 — Preparación del entorno | ✅ Completada |
+| Fase 1 — Primer endpoint / API | ✅ Completada |
+| Fase 2 — Primer modelo de IA | ✅ Completada |
+| Fase 3 — Interfaz de chat | ⏳ Pendiente |
 
 ## Estructura del proyecto
 
 ```
 pg-ai/
 ├── src/
-│   └── index.js        # Punto de entrada del Worker (placeholder de Fase 0)
+│   ├── index.js        # Punto de entrada del Worker: rutas, validación y respuestas HTTP
+│   └── ai.js           # Capa de integración con el proveedor de IA (Workers AI)
 ├── .gitignore          # Archivos que Git no debe versionar (dependencias, secretos, generados)
 ├── package.json        # Metadatos del proyecto, scripts y dependencias
 ├── package-lock.json   # Versiones exactas instaladas (generado por npm)
-├── wrangler.jsonc      # Configuración de Cloudflare Workers
+├── wrangler.jsonc      # Configuración de Cloudflare Workers (incluye el binding AI)
 └── README.md
 ```
 
@@ -52,18 +58,81 @@ pg-ai/
 - Git
 - Cuenta de Cloudflare (plan gratuito)
 
-## Uso
+## Iniciar el proyecto localmente
 
 ```bash
-# Instalar dependencias
-npm install
-
-# Levantar el Worker en local (http://localhost:8787)
-npm run dev
-
-# Verificar que el Worker compila, sin subir nada a Cloudflare
-npm run check
+npm install          # Instalar dependencias
+npx wrangler login   # Solo la primera vez: vincula Wrangler con tu cuenta de Cloudflare
+npm run dev          # Levanta el Worker en http://localhost:8787
+npm run check        # Verifica que el Worker compila, sin subir nada a Cloudflare
 ```
+
+> Workers AI no tiene modo 100 % local: aunque el Worker corra en tu PC, cada llamada a
+> `/api/chat` usa el servicio real de Cloudflare (por eso hace falta `wrangler login`).
+
+## Endpoints
+
+| Método | Ruta | Descripción |
+| --- | --- | --- |
+| GET | `/api/test` | Verifica que la API funciona. |
+| POST | `/api/chat` | Envía un mensaje al modelo de IA y devuelve su respuesta. |
+
+**`GET /api/test`** → `200`
+
+```json
+{ "status": "ok", "message": "PG AI funcionando" }
+```
+
+**`POST /api/chat`** con body `{ "message": "Hola" }` → `200`
+
+```json
+{ "response": "¡Hola! ¿En qué puedo ayudarte?" }
+```
+
+Errores (siempre en JSON, con la forma `{ "error": "..." }`):
+
+| Caso | Código |
+| --- | --- |
+| JSON inválido, `message` faltante, no es texto o está vacío | `400` |
+| Método HTTP incorrecto | `405` |
+| Ruta inexistente | `404` |
+| Falla al llamar a Workers AI | `502` |
+
+### Probar
+
+PowerShell (Windows):
+
+```powershell
+Invoke-RestMethod http://localhost:8787/api/test
+Invoke-RestMethod -Method Post -Uri http://localhost:8787/api/chat -ContentType "application/json" -Body '{"message":"Hola"}'
+```
+
+curl (en Windows usar `curl.exe`):
+
+```bash
+curl -i http://localhost:8787/api/test
+curl -i -X POST http://localhost:8787/api/chat -H "Content-Type: application/json" -d "{\"message\":\"Hola\"}"
+```
+
+## Modelo de IA
+
+**`@cf/meta/llama-3.2-3b-instruct`** (Meta Llama 3.2, 3B parámetros) vía Workers AI.
+
+- Disponible en el plan Free y con ficha oficial en la documentación de Workers AI.
+- Optimizado para diálogo multilingüe (incluye español).
+- De los más económicos del catálogo: ≈ 4.625 neurons por millón de tokens de entrada y ≈ 30.475 por millón de salida.
+- No es un modelo de "razonamiento", así que no gasta tokens ocultos pensando.
+
+Se cambia en un solo lugar: la constante `MODEL` en `src/ai.js`.
+
+## Límites del plan gratuito
+
+- **Workers AI:** 10.000 neurons por día, se reinician a las 00:00 UTC. Al superarlos, las llamadas **fallan con error; no se cobra** (para pasar el límite habría que contratar Workers Paid).
+- Las llamadas hechas desde `npm run dev` **también consumen** esa asignación.
+- Generación de texto: hasta 300 peticiones por minuto.
+- **Workers:** 100.000 peticiones por día y 10 ms de CPU por petición (esperar al modelo no cuenta como CPU).
+- Algunos modelos del catálogo exigen método de pago; PG AI no los usa.
+- Uso consultable en el dashboard de Cloudflare → AI → Workers AI.
 
 ## Arquitectura futura
 
