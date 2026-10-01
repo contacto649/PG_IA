@@ -34,13 +34,18 @@ Se priorizarán servicios y recursos gratuitos durante la etapa experimental.
 | --- | --- |
 | Fase 0 — Preparación del entorno | ✅ Completada |
 | Fase 1 — Primer endpoint / API | ✅ Completada |
-| Fase 2 — Primer modelo de IA | ✅ Completada |
-| Fase 3 — Interfaz de chat | ⏳ Pendiente |
+| Fase 2 — Primer modelo de IA | ✅ Completada y verificada con Workers AI real |
+| Fase 3 — Interfaz de chat | ✅ Completada |
+| Fase 4 — Instrucciones propias de PG AI | ⏳ Pendiente |
 
 ## Estructura del proyecto
 
 ```
 pg-ai/
+├── public/             # Frontend estático (se sirve en /)
+│   ├── index.html
+│   ├── styles.css
+│   └── app.js          # Llama a POST /api/chat y pinta la conversación
 ├── src/
 │   ├── index.js        # Punto de entrada del Worker: rutas, validación y respuestas HTTP
 │   └── ai.js           # Capa de integración con el proveedor de IA (Workers AI)
@@ -63,12 +68,14 @@ pg-ai/
 ```bash
 npm install          # Instalar dependencias
 npx wrangler login   # Solo la primera vez: vincula Wrangler con tu cuenta de Cloudflare
-npm run dev          # Levanta el Worker en http://localhost:8787
+npm run dev          # Levanta Worker + interfaz en http://localhost:8787
 npm run check        # Verifica que el Worker compila, sin subir nada a Cloudflare
 ```
 
 > Workers AI no tiene modo 100 % local: aunque el Worker corra en tu PC, cada llamada a
 > `/api/chat` usa el servicio real de Cloudflare (por eso hace falta `wrangler login`).
+
+Luego abrí **http://localhost:8787/** en el navegador para usar el chat.
 
 ## Endpoints
 

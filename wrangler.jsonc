@@ -13,6 +13,12 @@
 	// Fija la versión del runtime de Workers para que el comportamiento no cambie solo.
 	"compatibility_date": "2026-10-01",
 
+	// Frontend estático: todo lo que haya en public/ se sirve en la raíz (/ -> index.html).
+	// Si ninguna ruta coincide con un archivo (p. ej. /api/chat), la petición pasa al Worker.
+	"assets": {
+		"directory": "./public"
+	},
+
 	// Binding de Workers AI: queda disponible en el código como env.AI.
 	// No requiere API key: Cloudflare autentica con la cuenta dueña del Worker.
 	// Workers AI no tiene simulador local: `wrangler dev` usa el servicio real

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="es">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>PG AI</title>
+	<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+	<div class="app">
+		<header class="header">
+			<h1>PG AI</h1>
+			<p>Experimental AI Lab</p>
+		</header>
+
+		<main id="chat" class="chat" aria-live="polite">
+			<div class="message bot">
+				<span class="author">PG AI</span>
+				<div class="bubble">Hola. ¿En qué puedo ayudarte?</div>
+			</div>
+		</main>
+
+		<form id="form" class="composer">
+			<textarea id="input" rows="1" placeholder="Escribe un mensaje..." aria-label="Mensaje"></textarea>
+			<button id="send" type="submit">Enviar</button>
+		</form>
+	</div>
+	<script src="/app.js"></script>
+</body>
+</html>
