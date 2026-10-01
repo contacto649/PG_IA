@@ -1,0 +1,17 @@
+{
+  "name": "pg-ai",
+  "version": "0.0.0",
+  "description": "Proyecto experimental y educativo para aprender a construir progresivamente un sistema de IA y automatización.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "check": "wrangler deploy --dry-run"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "wrangler": "^4.145.0"
+  }
+}

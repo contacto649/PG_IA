@@ -1,0 +1,18 @@
+// Configuración de Cloudflare Workers para PG AI.
+// Referencia: https://developers.cloudflare.com/workers/wrangler/configuration/
+{
+	// Permite que VS Code autocomplete y valide este archivo.
+	"$schema": "node_modules/wrangler/config-schema.json",
+
+	// Nombre del Worker en Cloudflare (también define la URL *.workers.dev).
+	"name": "pg-ai",
+
+	// Archivo de entrada: el código que ejecuta el Worker.
+	"main": "src/index.js",
+
+	// Fija la versión del runtime de Workers para que el comportamiento no cambie solo.
+	"compatibility_date": "2026-10-01"
+
+	// Todavía NO hay bindings (Workers AI, D1, Vectorize, KV...).
+	// Se agregarán en fases posteriores, uno por vez.
+}
