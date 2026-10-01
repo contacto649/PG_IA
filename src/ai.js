@@ -6,13 +6,10 @@ import { SYSTEM_PROMPT } from "./system-prompt.js";
 
 const MODEL = "@cf/meta/llama-3.2-3b-instruct";
 
-export async function generateReply(env, message) {
-	// Cada petición es independiente: instrucciones de PG AI + mensaje actual (sin historial).
+export async function generateReply(env, messages) {
+	// El backend controla las instrucciones; el cliente aporta solo la conversación (ya validada).
 	const result = await env.AI.run(MODEL, {
-		messages: [
-			{ role: "system", content: SYSTEM_PROMPT },
-			{ role: "user", content: message },
-		],
+		messages: [{ role: "system", content: SYSTEM_PROMPT }, ...messages],
 		max_tokens: 512,
 	});
 

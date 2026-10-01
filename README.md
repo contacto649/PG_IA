@@ -37,6 +37,7 @@ Se priorizarán servicios y recursos gratuitos durante la etapa experimental.
 | Fase 2 — Primer modelo de IA | ✅ Completada y verificada con Workers AI real |
 | Fase 3 — Interfaz de chat | ✅ Completada |
 | Fase 4 — Instrucciones propias de PG AI | ✅ Completada |
+| Fase 5 — Contexto conversacional temporal | ✅ Completada |
 
 ## Estructura del proyecto
 
@@ -91,7 +92,7 @@ Luego abrí **http://localhost:8787/** en el navegador para usar el chat.
 { "status": "ok", "message": "PG AI funcionando" }
 ```
 
-**`POST /api/chat`** con body `{ "message": "Hola" }` → `200`
+**`POST /api/chat`** con body `{ "messages": [{ "role": "user", "content": "Hola" }] }` → `200`
 
 ```json
 { "response": "¡Hola! ¿En qué puedo ayudarte?" }
@@ -137,9 +138,25 @@ Se cambia en un solo lugar: la constante `MODEL` en `src/ai.js`.
 
 - **System prompt:** instrucciones que se envían al modelo con `role: "system"` en cada petición. Viven en `src/system-prompt.js`; `src/ai.js` las antepone al mensaje del usuario.
 - **PG AI ≠ Llama:** PG AI es la aplicación; el modelo de lenguaje subyacente es Llama 3.2 3B Instruct (Meta), ejecutado por Cloudflare Workers AI. Un system prompt condiciona el comportamiento del modelo, pero no lo entrena ni crea un modelo nuevo.
-- **Sin memoria:** cada mensaje es independiente (system prompt + mensaje actual). El modelo no recibe mensajes anteriores. Limitación actual, prevista para una fase posterior.
+- **Contexto, no memoria:** el navegador reenvía la conversación en cada petición (ver más abajo). No hay memoria persistente.
 - **Sin RAG ni herramientas:** no hay documentos, búsqueda, acciones ni integraciones; PG AI solo conversa.
 - **Costo:** el system prompt también forma parte del contexto enviado, así que consume tokens/neurons en cada petición.
+
+## Contexto conversacional (Fase 5)
+
+**Contrato de `/api/chat`:** el cuerpo es `{ "messages": [{ "role": "user"|"assistant", "content": "..." }, ...] }`. El último mensaje debe ser `user`. Por compatibilidad también se acepta `{ "message": "..." }` (se convierte en un array de un mensaje; cuesta ~3 líneas y no rompe las pruebas anteriores).
+
+**Quién controla qué:** el cliente controla la conversación; el servidor controla las instrucciones. El Worker arma `[{ role: "system", content: SYSTEM_PROMPT }, ...messages]`. Un mensaje con `role: "system"` (o cualquier rol distinto de `user`/`assistant`) se rechaza con `400`. Esto evita que el cliente reemplace el system prompt, pero **no hace al modelo inmune a prompt injection**: un mensaje `user` malicioso puede seguir intentando influir en el modelo.
+
+**Límites de validación (400 si se superan):** máx. 50 mensajes por petición y 4000 caracteres por mensaje, `content` no vacío y solo campos `role`/`content`. Son límites de la **API** (protegen al Worker), no el límite real de contexto del modelo, que se mide en tokens y es mucho mayor.
+
+**Contexto ≠ memoria:**
+- *Contexto conversacional:* información reenviada explícitamente al modelo dentro de la petición. Es lo que hay ahora.
+- *Memoria persistente:* información guardada fuera del modelo y recuperada después. **No existe todavía.**
+
+**Dónde vive el historial:** en el array `conversation` de `public/app.js`, solo en memoria JavaScript (sin localStorage, cookies ni base de datos). Al refrescar la página se pierde. Si una petición falla, el mensaje del usuario se quita del array (la burbuja queda visible con el error) para que el historial siga alternando `user`/`assistant`.
+
+**Ventana de contexto:** cada petición envía `system prompt + historial + mensaje nuevo`. A medida que la conversación crece, aumenta el input enviado y el consumo de neurons del plan gratuito, y eventualmente se alcanzaría el límite de contexto del modelo. Todavía no hay resumen ni truncamiento.
 
 ## Límites del plan gratuito
 
@@ -178,13 +195,14 @@ Fase 1 — Primer endpoint / API
 Fase 2 — Primer modelo de IA
 Fase 3 — Interfaz de chat
 Fase 4 — Instrucciones propias de PG AI
-Fase 5 — Outputs estructurados
-Fase 6 — Historial y persistencia
-Fase 7 — Memoria
-Fase 8 — Documentos y RAG
-Fase 9 — Tool calling
-Fase 10 — Automatizaciones
-Fase 11 — Agente
+Fase 5 — Contexto conversacional temporal
+Fase 6 — Outputs estructurados
+Fase 7 — Historial y persistencia
+Fase 8 — Memoria
+Fase 9 — Documentos y RAG
+Fase 10 — Tool calling
+Fase 11 — Automatizaciones
+Fase 12 — Agente
 ```
 
 ## Seguridad

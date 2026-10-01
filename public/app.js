@@ -9,6 +9,10 @@ const sendButton = document.getElementById("send");
 
 let busy = false;
 
+// Historial temporal: vive solo en memoria de esta página (se pierde al refrescar).
+// Formato: [{ role: "user" | "assistant", content: "..." }, ...]
+const conversation = [];
+
 // Crea un mensaje en el chat y devuelve el elemento de la burbuja para poder actualizarlo.
 function addMessage(role, text, extraClass = "") {
 	const wrapper = document.createElement("div");
@@ -43,12 +47,13 @@ async function sendMessage() {
 	input.style.height = "auto";
 
 	const pending = addMessage("bot", "PG AI está pensando...", "pending");
+	conversation.push({ role: "user", content: message });
 
 	try {
 		const res = await fetch("/api/chat", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ message }),
+			body: JSON.stringify({ messages: conversation }),
 		});
 
 		const data = await res.json().catch(() => null);
@@ -58,8 +63,12 @@ async function sendMessage() {
 
 		pending.wrapper.classList.remove("pending");
 		pending.bubble.textContent = data.response;
+		conversation.push({ role: "assistant", content: data.response });
 	} catch (err) {
 		console.error("Error en /api/chat:", err);
+		// Estrategia ante errores: se quita el mensaje del usuario del historial para que
+		// siga alternando user/assistant. La burbuja queda visible, pero no se reenviará.
+		conversation.pop();
 		pending.wrapper.classList.remove("pending");
 		pending.wrapper.classList.add("error");
 		pending.bubble.textContent = "No se pudo obtener una respuesta.";
