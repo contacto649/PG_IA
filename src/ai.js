@@ -4,6 +4,7 @@
 
 import { SYSTEM_PROMPT } from "./system-prompt.js";
 import { ANALYZE_PROMPT, ANALYZE_MAX_TOKENS } from "./analyze.js";
+import { MEMORY_INTENT_PROMPT } from "./memory.js";
 
 const MODEL = "@cf/meta/llama-3.2-3b-instruct";
 
@@ -15,8 +16,12 @@ async function run(env, messages, options) {
 }
 
 // Chat: el backend controla las instrucciones; el cliente aporta solo la conversación (ya validada).
-export async function generateReply(env, messages) {
-	const response = await run(env, [{ role: "system", content: SYSTEM_PROMPT }, ...messages], { max_tokens: 512 });
+// memoryContext (opcional): bloque de memoria/avisos de la aplicación, ya construido en memory.js.
+export async function generateReply(env, messages, memoryContext = "") {
+	const system = memoryContext ? `${SYSTEM_PROMPT}
+
+${memoryContext}` : SYSTEM_PROMPT;
+	const response = await run(env, [{ role: "system", content: system }, ...messages], { max_tokens: 512 });
 	if (typeof response !== "string") {
 		throw new Error("Respuesta inesperada de Workers AI.");
 	}
@@ -34,5 +39,18 @@ export function generateAnalysisRaw(env, text) {
 			{ role: "user", content: text },
 		],
 		{ max_tokens: ANALYZE_MAX_TOKENS, temperature: 0.2 },
+	);
+}
+
+// Clasificador de intención de memoria: devuelve la salida cruda (se valida en memory.js).
+// Es una inferencia ADICIONAL por mensaje. Temperatura 0 para que sea lo más estable posible.
+export function classifyMemoryIntentRaw(env, message) {
+	return run(
+		env,
+		[
+			{ role: "system", content: MEMORY_INTENT_PROMPT },
+			{ role: "user", content: message },
+		],
+		{ max_tokens: 150, temperature: 0 },
 	);
 }

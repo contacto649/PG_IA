@@ -1,8 +1,17 @@
 // Punto de entrada del Worker de PG AI.
 // Cloudflare llama a fetch() por cada petición HTTP que llega al Worker.
 
-import { generateReply, generateAnalysisRaw } from "./ai.js";
+import { generateReply, generateAnalysisRaw, classifyMemoryIntentRaw } from "./ai.js";
 import { parseAnalysis } from "./analyze.js";
+import {
+	buildMemoryContext,
+	deleteMemory,
+	getContextMemories,
+	getMemories,
+	isValidMemoryId,
+	parseMemoryIntent,
+	saveMemory,
+} from "./memory.js";
 import {
 	MAX_CONTEXT_MESSAGES,
 	createConversation,
@@ -51,6 +60,21 @@ export default {
 				return json({ error: "Método no permitido. Usá GET." }, 405, { Allow: "GET" });
 			}
 			return handleGetConversation(env, convMatch[1]);
+		}
+
+		if (url.pathname === "/api/memories") {
+			if (request.method !== "GET") {
+				return json({ error: "Método no permitido. Usá GET." }, 405, { Allow: "GET" });
+			}
+			return handleListMemories(env);
+		}
+
+		const memMatch = url.pathname.match(/^\/api\/memories\/([^/]+)$/);
+		if (memMatch) {
+			if (request.method !== "DELETE") {
+				return json({ error: "Método no permitido. Usá DELETE." }, 405, { Allow: "DELETE" });
+			}
+			return handleDeleteMemory(env, memMatch[1]);
 		}
 
 		if (url.pathname === "/api/analyze") {
@@ -227,9 +251,21 @@ async function handleChatPersistent(env, body) {
 		return json({ error: "Error al leer la conversación." }, 500);
 	}
 
+	// Memoria: clasificar intención (IA) → validar → guardar en D1 → recién entonces responder.
+	const memory = await processMemory(env, message);
+
+	let memories = [];
+	try {
+		memories = await getContextMemories(env);
+	} catch (err) {
+		console.error("Error de D1 al leer memorias:", err);
+		memory.note ??= "No se pudo leer la memoria guardada; no afirmes recordar datos que no tengas en esta conversación.";
+	}
+	const memoryContext = buildMemoryContext(memories, memory.note);
+
 	let response;
 	try {
-		response = await generateReply(env, [...history, { role: "user", content: message }]);
+		response = await generateReply(env, [...history, { role: "user", content: message }], memoryContext);
 	} catch (err) {
 		console.error("Error al llamar a Workers AI:", err);
 		return json({ error: "Error al generar la respuesta.", detail: String(err?.message ?? err) }, 502);
@@ -241,5 +277,72 @@ async function handleChatPersistent(env, body) {
 		console.error("Error de D1 al guardar mensajes:", err);
 		return json({ error: "La respuesta se generó pero no se pudo guardar." }, 500);
 	}
-	return json({ conversation_id: id, response });
+	// "memory" es información de depuración/aprendizaje: la interfaz la ignora.
+	return json({
+		conversation_id: id,
+		response,
+		memory: { classifier: memory.classifier, stored: memory.stored, in_context: memories.length },
+	});
+}
+
+// Clasifica el mensaje y, si el usuario pidió guardar algo, lo valida y lo guarda.
+// Nunca lanza: devuelve el estado y una "note" (aviso de la aplicación para el modelo) para que
+// la respuesta no afirme algo que no ocurrió (p. ej. "lo recordaré" si D1 falló).
+async function processMemory(env, message) {
+	const result = { classifier: null, stored: null, note: null };
+
+	let raw;
+	try {
+		raw = await classifyMemoryIntentRaw(env, message);
+	} catch (err) {
+		console.error("Error del clasificador de memoria:", err);
+		result.stored = "classifier_error";
+		result.note = "No se pudo determinar si había que guardar algo en memoria; no afirmes haber guardado nada.";
+		return result;
+	}
+
+	const parsed = parseMemoryIntent(raw);
+	if (parsed.error) {
+		console.error("Salida inválida del clasificador de memoria:", parsed.error);
+		result.stored = "classifier_invalid";
+		result.note = "No se pudo determinar si había que guardar algo en memoria; no afirmes haber guardado nada.";
+		return result;
+	}
+	result.classifier = parsed.value;
+	if (parsed.value.action !== "save") return result;
+
+	try {
+		const saved = await saveMemory(env, parsed.value.memory);
+		result.stored = saved.status;
+		result.note =
+			saved.status === "saved"
+				? `La aplicación acaba de guardar en memoria este dato: ${JSON.stringify(parsed.value.memory)}. Confírmalo de forma breve y natural.`
+				: `Este dato ya estaba guardado en memoria: ${JSON.stringify(parsed.value.memory)}. Indícalo de forma breve.`;
+	} catch (err) {
+		console.error("Error de D1 al guardar memoria:", err);
+		result.stored = "failed";
+		result.note =
+			"NO se pudo guardar el dato en memoria por un error. NO digas que lo guardaste ni que lo recordarás; informa brevemente que hubo un problema.";
+	}
+	return result;
+}
+
+async function handleListMemories(env) {
+	try {
+		return json({ memories: await getMemories(env) });
+	} catch (err) {
+		console.error("Error de D1 al listar memorias:", err);
+		return json({ error: "Error al leer las memorias." }, 500);
+	}
+}
+
+async function handleDeleteMemory(env, id) {
+	if (!isValidMemoryId(id)) return json({ error: "id de memoria inválido." }, 400);
+	try {
+		if (!(await deleteMemory(env, id))) return json({ error: "Memoria no encontrada." }, 404);
+		return json({ deleted: true });
+	} catch (err) {
+		console.error("Error de D1 al borrar memoria:", err);
+		return json({ error: "Error al borrar la memoria." }, 500);
+	}
 }

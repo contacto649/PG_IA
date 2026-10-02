@@ -40,6 +40,7 @@ Se priorizarán servicios y recursos gratuitos durante la etapa experimental.
 | Fase 5 — Contexto conversacional temporal | ✅ Completada |
 | Fase 6 — Outputs estructurados | ✅ Completada |
 | Fase 7 — Persistencia con D1 | ✅ Completada |
+| Fase 8 — Memoria selectiva persistente selectiva persistente | ✅ Completada (lógica verificada con modelo simulado; falta verificar el comportamiento de Llama real, ver abajo) |
 
 ## Estructura del proyecto
 
@@ -54,7 +55,8 @@ pg-ai/
 │   ├── ai.js           # Capa de integración con el proveedor de IA (Workers AI)
 │   ├── system-prompt.js # Instrucciones (system prompt) de PG AI
 │   ├── analyze.js      # Instrucciones y validación del análisis estructurado
-│   └── conversations.js # Acceso a D1: conversaciones y mensajes
+│   ├── conversations.js # Acceso a D1: conversaciones y mensajes
+│   └── memory.js       # Memoria: clasificador de intención, validación, D1 y contexto
 ├── migrations/         # Esquema SQL versionado de D1 (0001_create_conversations.sql)
 ├── .gitignore          # Archivos que Git no debe versionar (dependencias, secretos, generados)
 ├── package.json        # Metadatos del proyecto, scripts y dependencias
@@ -93,6 +95,8 @@ Luego abrí **http://localhost:8787/** en el navegador para usar el chat.
 | POST | `/api/analyze` | Analiza un proceso y devuelve un objeto JSON estructurado. |
 | POST | `/api/conversations` | Crea una conversación vacía y devuelve su `id` (UUID). |
 | GET | `/api/conversations/:id` | Devuelve la conversación con sus mensajes en orden cronológico. |
+| GET | `/api/memories` | Lista las memorias guardadas. |
+| DELETE | `/api/memories/:id` | Borra una memoria (`400` id inválido, `404` inexistente). |
 
 **`GET /api/test`** → `200`
 
@@ -234,6 +238,30 @@ npm run db:migrate:remote   # crea las tablas en la D1 de Cloudflare
 `/api/analyze` sigue siendo independiente y no usa D1. Concurrencia avanzada (dos pestañas escribiendo a la vez) queda fuera de alcance; el botón se deshabilita mientras hay una respuesta en curso.
 
 > ⚠️ **Seguridad:** no hay usuarios ni autenticación, así que quien conozca un `conversation_id` puede leer esa conversación y escribir en ella. Es adecuado para el laboratorio local, no para guardar conversaciones sensibles ni para producción multiusuario.
+
+## Memoria selectiva (Fase 8)
+
+**Tres cosas distintas:** *historial* = lo que ocurrió en una conversación (tabla `messages`); *contexto* = lo que se envía al modelo en una petición; *memoria* = hechos que el usuario pidió guardar y que **sobreviven entre conversaciones** (tabla `memories`). Que algo esté en el historial no lo convierte en memoria.
+
+**Tabla `memories`** (`migrations/0002_create_memories.sql`): `id` (UUID), `content`, `content_key` (UNIQUE, versión normalizada para evitar duplicados), `created_at`, `updated_at`. Sin `user_id`: no hay usuarios, la memoria es **global** para esta instancia del laboratorio.
+
+**Solo memoria explícita.** Se guarda únicamente si el usuario lo pide ("recordá que…", "quiero que recuerdes que…"). Contar un dato ("mi comida favorita es la pizza") no lo guarda. Ante la duda, no se guarda.
+
+**Flujo en `/api/chat` con `conversation_id`:** clasificador de intención (Llama, `temperature: 0`) → el Worker valida el JSON (`parseMemoryIntent`: `action` es `save`/`none`; si es `save`, `memory` es texto no vacío de ≤ 300 caracteres) → `saveMemory()` (el modelo nunca escribe en D1) → se leen las memorias → se arma el contexto → Llama responde → se guarda el historial. Si el clasificador o D1 fallan, no se guarda nada y se le avisa al modelo (aviso de la aplicación) para que **no afirme** que recordó algo. La respuesta incluye un campo `memory` con `classifier`, `stored` e `in_context` solo para inspección; la interfaz lo ignora.
+
+**Duplicados:** `content_key` normaliza minúsculas, tildes, espacios y puntuación en los extremos, y `INSERT OR IGNORE` + índice UNIQUE evita insertar dos veces lo mismo. No hay deduplicación semántica.
+
+**Borrado:** `DELETE /api/memories/:id`. Lo que PG AI puede guardar, también se puede borrar. No hay edición: borrar y volver a guardar.
+
+**Cómo llega al modelo:** se agrega al mensaje `system` un bloque delimitado `<memorias>` con las memorias como **datos entre comillas JSON** y la indicación de que no son instrucciones. No se simulan mensajes del usuario. Solo se envían las **20 memorias más recientes** (`MAX_MEMORIES_IN_CONTEXT`); D1 puede guardar más. Esto reduce, pero **no elimina**, el riesgo de prompt injection: una memoria maliciosa sigue siendo texto que el modelo lee.
+
+**Costo de inferencia:** cada mensaje con `conversation_id` hace **2 llamadas** a Workers AI (clasificador + respuesta), en lugar de 1. Consume más neurons del plan gratuito.
+
+> ⚠️ **Seguridad:** sin autenticación ni usuarios, sin cifrado a nivel de aplicación, memoria global. No guardes contraseñas, tokens, datos bancarios, médicos ni secretos. No apto para múltiples usuarios.
+
+> Limitaciones del modelo: Llama 3.2 3B puede clasificar mal (falsos positivos/negativos) o redactar la memoria de forma imperfecta. El clasificador solo ve el mensaje actual, no el historial ("recordá eso" no funciona).
+
+> **Estado de verificación:** la lógica (validación, D1, duplicados, borrado, fallos, armado del contexto, 37 comprobaciones) se probó con un D1 de SQLite real y un modelo **simulado**. El comportamiento del clasificador con Llama real **no pudo probarse** en el equipo de desarrollo porque `wrangler` dejó de arrancar; falta correr los tests A–J con el modelo real.
 
 ## Límites del plan gratuito
 
