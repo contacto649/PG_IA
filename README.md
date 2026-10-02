@@ -39,6 +39,7 @@ Se priorizarán servicios y recursos gratuitos durante la etapa experimental.
 | Fase 4 — Instrucciones propias de PG AI | ✅ Completada |
 | Fase 5 — Contexto conversacional temporal | ✅ Completada |
 | Fase 6 — Outputs estructurados | ✅ Completada |
+| Fase 7 — Persistencia con D1 | ✅ Completada |
 
 ## Estructura del proyecto
 
@@ -52,7 +53,9 @@ pg-ai/
 │   ├── index.js        # Punto de entrada del Worker: rutas, validación y respuestas HTTP
 │   ├── ai.js           # Capa de integración con el proveedor de IA (Workers AI)
 │   ├── system-prompt.js # Instrucciones (system prompt) de PG AI
-│   └── analyze.js      # Instrucciones y validación del análisis estructurado
+│   ├── analyze.js      # Instrucciones y validación del análisis estructurado
+│   └── conversations.js # Acceso a D1: conversaciones y mensajes
+├── migrations/         # Esquema SQL versionado de D1 (0001_create_conversations.sql)
 ├── .gitignore          # Archivos que Git no debe versionar (dependencias, secretos, generados)
 ├── package.json        # Metadatos del proyecto, scripts y dependencias
 ├── package-lock.json   # Versiones exactas instaladas (generado por npm)
@@ -88,6 +91,8 @@ Luego abrí **http://localhost:8787/** en el navegador para usar el chat.
 | GET | `/api/test` | Verifica que la API funciona. |
 | POST | `/api/chat` | Envía un mensaje al modelo de IA y devuelve su respuesta. |
 | POST | `/api/analyze` | Analiza un proceso y devuelve un objeto JSON estructurado. |
+| POST | `/api/conversations` | Crea una conversación vacía y devuelve su `id` (UUID). |
+| GET | `/api/conversations/:id` | Devuelve la conversación con sus mensajes en orden cronológico. |
 
 **`GET /api/test`** → `200`
 
@@ -199,6 +204,37 @@ if (analysis.automation_candidate && !analysis.ai_required) {
 
 > Limitación del modelo base: el modelo de 3B a veces produce expresiones poco naturales en español o inventa "problemas" cuando casi no hay información. Se documenta, no se parchea.
 
+## Persistencia con D1 (Fase 7)
+
+**D1** es la base de datos SQL (SQLite) de Cloudflare. Plan gratuito: 5 M filas leídas/día, 100 k escritas/día y 5 GB; al superarlo las consultas fallan, no se cobra.
+
+**Esquema** (`migrations/0001_create_conversations.sql`): `conversations(id, created_at, updated_at)` y `messages(id, conversation_id, role, content, created_at)`, relación 1 → N. El `id` público es un UUID (`crypto.randomUUID()`: no es adivinable ni secuencial; el `id` autoincremental de `messages` es solo orden interno).
+
+**Binding:** `env.DB` (ver `wrangler.jsonc`). Con `npm run dev` se usa una D1 **local** (archivo en `.wrangler/`, ignorado por Git); la base remota `pg-ai-db` existe en tu cuenta pero solo se usaría desplegando.
+
+```bash
+npm run db:migrate:local    # crea las tablas en la D1 local
+npm run db:migrate:remote   # crea las tablas en la D1 de Cloudflare
+```
+
+> En Windows, `wrangler d1 migrations apply --local` se colgó en este equipo; si te pasa, aplicá el SQL con `npx wrangler d1 execute pg-ai-db --local --file migrations/0001_create_conversations.sql`.
+
+**`POST /api/chat` ahora tiene dos modos:**
+- Con `{ "conversation_id": "...", "message": "..." }` → **persistente**: D1 es la fuente de verdad. El Worker valida el id, lee los últimos mensajes, llama al modelo y **solo si responde** guarda el mensaje del usuario y la respuesta (en un `db.batch` atómico) y actualiza `updated_at`. Si Workers AI falla, no se guarda nada.
+- Sin `conversation_id` → modo temporal de la Fase 5 (`messages` o `message`).
+- `conversation_id` con formato inválido → `400`; UUID válido inexistente → `404`.
+
+**localStorage solo guarda el `conversation_id`** (qué conversación abrir). El contenido vive en D1. Al refrescar, `public/app.js` lee el id, hace `GET /api/conversations/:id` y redibuja las burbujas; si D1 responde `404`, descarta el id y crea una conversación nueva. El botón **Nueva conversación** crea otra y deja de usar la anterior (no se borra de D1).
+
+**Persistencia ≠ contexto ≠ memoria:**
+- *Historial persistido:* todo lo guardado en D1.
+- *Contexto del modelo:* solo los **últimos 20 mensajes** (`MAX_CONTEXT_MESSAGES` en `src/conversations.js`) se envían a Llama en cada petición. Es un límite de este experimento, distinto del límite real de contexto del modelo.
+- *Memoria inteligente:* extraer y recordar hechos ("a Lu le gusta el verde") **no existe todavía**.
+
+`/api/analyze` sigue siendo independiente y no usa D1. Concurrencia avanzada (dos pestañas escribiendo a la vez) queda fuera de alcance; el botón se deshabilita mientras hay una respuesta en curso.
+
+> ⚠️ **Seguridad:** no hay usuarios ni autenticación, así que quien conozca un `conversation_id` puede leer esa conversación y escribir en ella. Es adecuado para el laboratorio local, no para guardar conversaciones sensibles ni para producción multiusuario.
+
 ## Límites del plan gratuito
 
 - **Workers AI:** 10.000 neurons por día, se reinician a las 00:00 UTC. Al superarlos, las llamadas **fallan con error; no se cobra** (para pasar el límite habría que contratar Workers Paid).
@@ -238,7 +274,7 @@ Fase 3 — Interfaz de chat
 Fase 4 — Instrucciones propias de PG AI
 Fase 5 — Contexto conversacional temporal
 Fase 6 — Outputs estructurados
-Fase 7 — Historial y persistencia
+Fase 7 — Persistencia con D1
 Fase 8 — Memoria
 Fase 9 — Documentos y RAG
 Fase 10 — Tool calling

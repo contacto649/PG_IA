@@ -19,6 +19,17 @@
 		"directory": "./public"
 	},
 
+	// Base de datos D1 (historial de conversaciones): disponible en el código como env.DB.
+	// El esquema vive en migrations/ y se aplica con `npm run db:migrate:local` / `db:migrate:remote`.
+	// database_id no es un secreto: solo identifica la base dentro de tu cuenta.
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "pg-ai-db",
+			"database_id": "b36ca8b8-c732-45d7-b84e-3ca938126c86"
+		}
+	],
+
 	// Binding de Workers AI: queda disponible en el código como env.AI.
 	// No requiere API key: Cloudflare autentica con la cuenta dueña del Worker.
 	// Workers AI no tiene simulador local: `wrangler dev` usa el servicio real

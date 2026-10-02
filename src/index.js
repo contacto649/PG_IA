@@ -3,6 +3,15 @@
 
 import { generateReply, generateAnalysisRaw } from "./ai.js";
 import { parseAnalysis } from "./analyze.js";
+import {
+	MAX_CONTEXT_MESSAGES,
+	createConversation,
+	getConversation,
+	getMessages,
+	getRecentMessages,
+	isValidId,
+	saveExchange,
+} from "./conversations.js";
 
 function json(data, status = 200, headers = {}) {
 	return new Response(JSON.stringify(data), {
@@ -27,6 +36,21 @@ export default {
 				return json({ error: "Método no permitido. Usá POST." }, 405, { Allow: "POST" });
 			}
 			return handleChat(request, env);
+		}
+
+		if (url.pathname === "/api/conversations") {
+			if (request.method !== "POST") {
+				return json({ error: "Método no permitido. Usá POST." }, 405, { Allow: "POST" });
+			}
+			return handleCreateConversation(env);
+		}
+
+		const convMatch = url.pathname.match(/^\/api\/conversations\/([^/]+)$/);
+		if (convMatch) {
+			if (request.method !== "GET") {
+				return json({ error: "Método no permitido. Usá GET." }, 405, { Allow: "GET" });
+			}
+			return handleGetConversation(env, convMatch[1]);
 		}
 
 		if (url.pathname === "/api/analyze") {
@@ -101,6 +125,12 @@ async function handleChat(request, env) {
 		return json({ error: "El body debe ser JSON válido." }, 400);
 	}
 
+	// Modo persistente: con conversation_id, el servidor (D1) es dueño del historial.
+	if (body?.conversation_id !== undefined) {
+		return handleChatPersistent(env, body);
+	}
+
+	// Modo temporal (Fase 5): el cliente envía el historial en messages.
 	const parsed = parseMessages(body);
 	if (parsed.error) {
 		return json({ error: parsed.error }, 400);
@@ -150,4 +180,66 @@ async function handleAnalyze(request, env) {
 		return json({ error: "Invalid structured response from AI", detail: parsed.error }, 502);
 	}
 	return json(parsed.value);
+}
+
+async function handleCreateConversation(env) {
+	try {
+		const id = await createConversation(env);
+		return json({ id }, 201);
+	} catch (err) {
+		console.error("Error de D1 al crear conversación:", err);
+		return json({ error: "Error al crear la conversación." }, 500);
+	}
+}
+
+async function handleGetConversation(env, id) {
+	// Un id que no es UUID ni siquiera se consulta: 400 (request mal formado).
+	// Un UUID válido que no existe: 404.
+	if (!isValidId(id)) return json({ error: "conversation_id inválido." }, 400);
+	try {
+		const conversation = await getConversation(env, id);
+		if (!conversation) return json({ error: "Conversación no encontrada." }, 404);
+		const messages = await getMessages(env, id);
+		return json({ ...conversation, messages });
+	} catch (err) {
+		console.error("Error de D1 al leer conversación:", err);
+		return json({ error: "Error al leer la conversación." }, 500);
+	}
+}
+
+// Flujo: validar → leer historial de D1 → llamar al modelo → SOLO si responde, guardar user+assistant.
+// Si Workers AI falla no se guarda nada, así no quedan mensajes del usuario sin respuesta.
+async function handleChatPersistent(env, body) {
+	const { conversation_id: id, message } = body;
+	if (!isValidId(id)) return json({ error: "conversation_id inválido." }, 400);
+	if (typeof message !== "string") return json({ error: "El campo message debe ser texto." }, 400);
+	if (message.trim() === "") return json({ error: "El campo message no puede estar vacío." }, 400);
+	if (message.length > MAX_CONTENT_LENGTH) {
+		return json({ error: `El campo message supera los ${MAX_CONTENT_LENGTH} caracteres.` }, 400);
+	}
+
+	let history;
+	try {
+		if (!(await getConversation(env, id))) return json({ error: "Conversación no encontrada." }, 404);
+		history = await getRecentMessages(env, id, MAX_CONTEXT_MESSAGES);
+	} catch (err) {
+		console.error("Error de D1 al leer historial:", err);
+		return json({ error: "Error al leer la conversación." }, 500);
+	}
+
+	let response;
+	try {
+		response = await generateReply(env, [...history, { role: "user", content: message }]);
+	} catch (err) {
+		console.error("Error al llamar a Workers AI:", err);
+		return json({ error: "Error al generar la respuesta.", detail: String(err?.message ?? err) }, 502);
+	}
+
+	try {
+		await saveExchange(env, id, message, response);
+	} catch (err) {
+		console.error("Error de D1 al guardar mensajes:", err);
+		return json({ error: "La respuesta se generó pero no se pudo guardar." }, 500);
+	}
+	return json({ conversation_id: id, response });
 }

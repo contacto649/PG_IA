@@ -6,7 +6,9 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "check": "wrangler deploy --dry-run"
+    "check": "wrangler deploy --dry-run",
+    "db:migrate:local": "wrangler d1 migrations apply pg-ai-db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply pg-ai-db --remote"
   },
   "engines": {
     "node": ">=22"
